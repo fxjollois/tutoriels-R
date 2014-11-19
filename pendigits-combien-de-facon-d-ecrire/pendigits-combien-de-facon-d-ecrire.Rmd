@@ -1,0 +1,229 @@
+---
+output: html_document
+---
+# Pen-digits data : combien de façon différente d'écrire un chiffre y-a-t'il ?
+
+## Les données
+
+Elles sont disponibles [ici][uci-pen]. Elles représentent 7494 écritures d'un chiffre (entre 0 et 9), chaque tracé étant représenté par 8 points (coordonnées $(x, y)$ homogénéisées entre 0 et 100) et donc le chiffre écrit (voir les exemples ci-dessous pour plus de compréhension).
+
+## Importation
+
+La première étape est bien évidemment l'importation des données. Attention donc au répertoire de travail (à gérer avec `setwd()`). On modifie les noms de variables pour avec des $(X_i, Y_i), \forall i = 1, \ldots, n$ et le chiffre dessiné. Vous voyez ci-dessous le debut de la table.
+
+```{r}
+pen = read.table("pendigits.tra", sep = ",")
+names(pen) = c(paste(c("X", "Y"), rep(1:8, each = 2), sep = ""), "chiffre")
+head(pen)
+```
+
+## Fonction utile de traçage d'un chiffre
+
+Puisque les données s'y prêtent très bien, nous allons régulièrement utiliser la représentation visuelle des données, en *traçant* le chiffre. Pour cela, nous créons une fonction qui prendra en paramètre une ligne de la table, et deux paramètres optionnels qui sont : `titre` qui est assez explicite, et `indice` qui indice si on veut voir apparaître l'indice de chaque point de 1 à 8 sur le graphique. Pour illustrer la fonction, et surtout les données, voici représentée la première ligne de la table.
+
+```{r}
+traceChiffre <- function(v, titre = "", indice = F) {
+  vv = as.vector(as.matrix(v))
+  x = vv[seq(1, 15, by = 2)]
+  y = vv[seq(2, 16, by = 2)]
+  plot(x, y, col = "gray20",
+		type = "l", xlim = c(0, 100), ylim = c(0, 100), 
+    xaxt = "n", yaxt = "n", main = titre)
+  if (indice)
+    text(x, y, labels = 1:8, cex = 0.9, font = 2)
+}
+traceChiffre(pen[1,], "Exemple : ici un 8", indice = T)
+```
+
+## Première visualisation 
+
+Pour voir comment sont les données, il est possible ici de dessiner le premier exemple de chaque chiffre (cf ci-dessous). On remarque que le *5* et le *7* sont peu reconnaissables.
+
+```{r}
+par(mfrow = c(2, 5), mar = c(0, 0, 2, 0) + 0.1)
+for (c in 0:9) {
+  ex = pen[pen$chiffre == c,1:16][1,]
+  traceChiffre(ex, c, indice = T)
+}
+```
+
+Comme il n'est pas envisageable de le faire pour chaque exemple, et pour visualiser un peu mieux, nous allons repr?senter le *chiffre moyen* (i.e. les coordonnées moyennes de chaque point, pour chaque chiffre - voir ci-dessous). Ici, on remarque des effets étonnants sur certains chiffres (*5* et *7* encore, ainsi que *8* et *9*).
+
+```{r}
+cmoy = apply(pen[,1:16], 2, tapply, pen$chiffre, mean)
+par(mfrow = c(2, 5), mar = c(0, 0, 2, 0) + 0.1)
+for (i in 1:10) 
+  traceChiffre(cmoy[i,], i-1)
+```
+
+## Visualisation globale
+
+Une méthode directement applicable ici et bien utile est l'Analyse en Composantes Principales (ou ACP), qui permet de projeter un espace à $d$ dimensions dans un sous-espace de moindre dimensions (idéalement 2 ou 3), en minimisant la perte d'informations (i.e. l'inertie). Nous utilisons ici le package `FactoMineR` (cf [site web][FactoMineR]). On remarque que certains chiffres sont concentrés dans un zone restreinte, alors que d'autres sont plus *volatiles*.
+
+```{r}
+library(FactoMineR)
+acp = PCA(pen, quali.sup = 17, graph = F)
+plot(acp$ind$coord[,1:2], pch = 19, cex = 0.75, font.sub = 3, cex.sub = 0.8,
+     col = rainbow(10)[pen$chiffre + 1], xlim = c(-5, 4), ylim = c(-4, 5),
+     main = paste(round(acp$eig[2,3], 1), "% d'inertie expliquée"),
+     xlab = paste(round(acp$eig[1,2], 1), "%"),
+     ylab = paste(round(acp$eig[2,2], 1), "%"),
+     sub = "Le premier plan factoriel représente ici 49% de l'information")
+legend("bottom", ncol = 10, pch = 19, col = rainbow(10), legend = 0:9, cex = 0.8)
+```
+
+Pour mieux voir ce qu'il se passe pour chaque chiffre, nous allons représenter les points de chaque chiffre séparemment (cf ci-dessous). On remarque visuellement que le *2*, le *3* et le *6* (ainsi que le *4* et le *9*) sont localisés dans une zone assez restreinte. Par contre, le *5*, le *7* et le *8* sont clairement très éparpillés, avec même deux groupes distincts pour le *5*. On est donc en droit de se demande s'il existe des **classes** pour chaque chiffre.
+
+```{r}
+par(mfrow = c(2, 5), mar = c(0, 0, 2, 0) + 0.1)
+for (c in 0:9) {
+  plot(acp$ind$coord[pen$chiffre == c,1:2], 
+       pch = 19, cex = 0.5, xaxt = "n", yaxt = "n",
+       col = rainbow(10)[c + 1], xlim = c(-5, 4), ylim = c(-4, 5),
+       main = c)
+}
+```
+
+## Recherche d'un nombre d'écritures différentes pour chaque chiffre
+
+Comme indiqué précédemment, on peut se poser la question de savoir combien il y a de façons d'écrire chaque chiffre. Pour cela, nous avons choisi ici d'utiliser la classification hiérarchique ascendante (ou CAH), en utlisant la fonction `hclust()` du package `stats`. Pour aider au choix du nombre de classes (manuel ici), trois grahiques sont présentés pour chaque chiffre :
+- le dendrogramme de la CAH : nous choisirons un découpage au niveau où le saut entre deux paliers du dendrogramme semble le plus important ;
+- les sauts entre deux partitions (ratio valeur pour $k$ sur valeur pour $k-1$) : un saut important est un critère de bonne partition ;
+- l'évolution du $r^2$ : plus la valeur est grande, mieux est la partition (attention, avec ce critère la *meilleure* partition est celle à $n$ classes...).
+
+Avec ces informations, nous pouvons déterminer les nombres de classes pour chaque chiffre. Il est préférable, dans notre cas, de prendre des partitions assez fines (mais pas trop). Voici ce que je propose ici :
+
+Chiffre | Nb de classes | Autre choix possible
+--|---|---
+0 | 3 | 2
+1 | 3 | 2
+2 | 5 | 2
+3 | 2 | 4, 5
+4 | 2 | aucun
+5 | 2 | 4
+6 | 4 | 2
+7 | 2 | 2, 5
+8 | 7 | 2, 3, 4
+9 | 4 | 2, 7
+
+```{r, fig.cap="CAH"}
+ChoixNbClassesCAH <- function (chiffre) {
+  penchiffre = pen[pen$chiffre == chiffre, - 17]
+  hward = hclust(dist(penchiffre), "ward.D2")
+  layout(matrix(c(1, 1, 2, 3), 2, 2))
+  par(mar = c(2, 2, 3, 0) + 0.1)
+  plot(hward, labels = F, hang = -1,
+       sub = "", main = paste("CAH - chiffre", chiffre))
+  jump = hward$height[-1] / hward$height[-nrow(penchiffre)+1]
+  plot(tail(jump, n = 10), type = "l", axes = F, 
+       xlab = "Nb de classes", ylab = "",
+       main = "Saut entre deux partitions")
+  axis(1, at = 1:10, labels = 11:2)
+  axis(2)
+  abline(v = which.max(tail(jump, n = 10)), lty = 2)
+  I = sum((penchiffre - sapply(penchiffre, mean))**2)
+  r2 = 0
+  for (k in 2:10) {
+    zward = cutree(hward, k)
+    centresward = apply(penchiffre, 2, tapply, zward, mean)
+    W = sum((penchiffre - centresward[zward,])**2)
+    r2 = c(r2, (I - W) / I * 100)
+    }
+  plot(r2, type = "l", 
+       main = "Evolution du r2",
+       xlab = "Nb de classes")
+}
+
+for (chiffre in 0:9)
+  ChoixNbClassesCAH(chiffre)
+```
+
+
+## Affichage des différentes écritures
+
+Tout d'abord, suite aux choix faits précédemment, on décide de créer un vecteur gardant en mémoire ceux-ci.
+
+```{r}
+nbclasses = c(3, 3, 5, 2, 2, 2, 4, 2, 7, 4)
+```
+
+Pour affiner la partition, nous avons décidé ici d'appliquer un $k$-means avec le nombre de classes choisi. Ensuite, nous traçons les représentants (centres) de chaque classe, afin de voir les différentes écritures détectées pour chaque chiffre. Nous ajoutons en plus la projection de ces points sur le premier plan factoriel pour avoir plus d'informations.
+
+### Chiffre 0. 
+
+Les trois façons d'écrire différent uniquement sur le point de départ du chiffre, toutes tournent dans le sens anti-horaire. Dans la classe 2, il y a un individu atypique.
+
+### Chiffre 1. 
+
+On distingue clairement deux grands types d'écritures :
+
+  - la classe 2, avec une base en bas du $1$ ;
+  - la classe 1 et la classe 3, assez prochaine, qui différent sur l'inclinaison de l'écriture.
+
+### Chiffre 2. 
+
+Même si nous avions détecté 5 classes, il s'avère qu'il ne semble y avoir qu'une seule façon d'écrire, les différences entre les classes étant assez minimes.
+
+### Chiffre 3. 
+
+Idem que pour le chiffre *2*, les deux classes semblent très proches.
+
+### Chiffre 4. 
+
+C'est dans le *retour* de la dernière barre descendante qu'il y a différence entre les deux classes
+
+### Chiffre 5. 
+
+Les deux façons d'écrire sont très nettes ici :
+
+  - la classe 1, où l'on écrit d'abord la barre du haut, puis le reste du chiffre ;
+  - la classe 2, où l'on écrit la barre du haut à la fin.
+
+### Chiffre 6. 
+
+Idem que pour le chiffre *2*, les quatre classes semblent très proches.
+
+### Chiffre 7. 
+
+On retrouve dans la distinction entre la classe 1 et la classe 2, la différence d'écriture du chiffre *7* selon les habitudes :
+
+  - la classe 1, avec une barre au milieu ;
+  - la classe 2, sans cette même barre.
+
+### Chiffre 8. 
+
+Le choix de 7 classes s'avère judicieux ici, même s'il complique la tâche :
+
+  - la classe 1, où le tracé part du bas à gauche vers le haut à droite ;
+  - la classe 2, la classe 5 et la classe 7, où le tracé part du centre droite puis monte sur la gauche et redescend ;
+  - la classe 3, où le tracé part du haut à gauche vers le bas à droite ;
+  - la classe 4, où la boucle du haut est faite en premier, puis la boucle du bas ;
+  - la classe 6, où le tracé est l'opposé de celui de la classe 2.
+
+### Chiffre 9. 
+
+Les quatre classes correspondent à 3 façons d'écrire :
+
+  - la classe 1, et la classe 3, où la boucle du haut est faite dans le sens anti-horaire avec un départ à droite, puis le tracé du bas ;
+  - la classe 2, où la boucle du haut est dans le même sens mais avec un départ à gauche ;
+  - la classe 4, avec un départ en bas à gauche pour remonter jusqu'à la boucle du haut.
+
+```{r, fig.cap="facons"}
+TypeEcriture <- function(chiffre, k) {
+  x = pen[pen$chiffre == chiffre, - 17]
+  res = kmeans(x, k, nstart = 30)
+	par(mfrow = c(2, k), mar = c(0, 0, 2, 0) + 0.1)
+	for (l in 1:k)
+		traceChiffre(res$centers[l,], paste(chiffre, l, sep = " : classe "), T)
+  for (l in 1:k)
+		plot(acp$ind$coord[pen$chiffre == chiffre,1:2][res$cluster == l,], 
+         pch = 19, cex = 0.5, xaxt = "n", yaxt = "n",
+         col = rainbow(10)[chiffre + 1], xlim = c(-5, 4), ylim = c(-4, 5))
+}
+for (chiffre in 0:9)
+  TypeEcriture(chiffre, nbclasses[chiffre+1])
+```
+
+
+[uci-pen]: https://archive.ics.uci.edu/ml/datasets/Pen-Based+Recognition+of+Handwritten+Digits "Lien vers les donn?es"
+[FactoMineR]: http://factominer.free.fr/ "Lien vers l'outil FactoMineR"
